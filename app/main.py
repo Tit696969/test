@@ -133,21 +133,26 @@ async def analyze_text(input_text, dale_chall_familiar_words_path):
     else:
         return metrics
 
-# Function to download YouTube video as audio
 async def download_youtube_video_as_audio(url):
     ydl_opts = {
-        'outtmpl': 'temp_audio.%(ext)s',
-        'format': 'bestaudio/best',
+        'outtmpl': 'temp_audio.%(ext)s',  # Output template for the downloaded file
+        'format': 'bestaudio/best',  # Download the best available audio format
         'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'key': 'FFmpegExtractAudio',  # Extract audio using ffmpeg
+            'preferredcodec': 'mp3',  # Convert to MP3
+            'preferredquality': '192',  # Set audio quality
         }],
-        'cookiefile': './cookies.txt',  # Ensure this path is correct
-        'verbose': True,  # Enable verbose logging
-        'extract_flat': True,  # Skip signature extraction
+        'cookiesfrombrowser': ('firefox',),  # Use cookies from Firefox
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/119.0',  # Mimic Firefox
+        'extractor_args': {'youtube': {'player_client': ['android']}},  # Use Android client
+        'noplaylist': True,  # Download only single video, not playlists
+        'quiet': False,  # Show detailed logs
         'ignoreerrors': True,  # Ignore errors and continue
+        'retries': 5,  # Retry up to 5 times
+        'sleep_interval': 5,  # Wait 5 seconds between retries
+        'max_sleep_interval': 10,  # Maximum wait time between retries
     }
+    
     try:
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
