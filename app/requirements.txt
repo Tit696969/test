@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+xgboost
+pydantic
+numpy
+pandas
+textstat
+deep-translator
+langdetect
+requests
+yt-dlp
+librosa
+scipy
