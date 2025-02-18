@@ -134,29 +134,39 @@ async def analyze_text(input_text, dale_chall_familiar_words_path):
         return metrics
 
 async def download_youtube_video_as_audio(url):
-    ydl_opts = {
-        'outtmpl': 'temp_audio.%(ext)s',  # Output template for the downloaded file
-        'format': 'bestaudio/best',  # Download the best available audio format
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',  # Extract audio using ffmpeg
-            'preferredcodec': 'mp3',  # Convert to MP3
-            'preferredquality': '192',  # Set audio quality
-        }],
-        'cookiesfrombrowser': ('firefox',),  # Use cookies from Firefox
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/119.0',  # Mimic Firefox
-        'extractor_args': {'youtube': {'player_client': ['android']}},  # Use Android client
-        'noplaylist': True,  # Download only single video, not playlists
-        'quiet': False,  # Show detailed logs
-        'ignoreerrors': True,  # Ignore errors and continue
-        'retries': 5,  # Retry up to 5 times
-        'sleep_interval': 5,  # Wait 5 seconds between retries
-        'max_sleep_interval': 10,  # Maximum wait time between retries
-    }
+    # Rotate configurations
+    client_config = random.choice(list(CLIENT_CONFIGS.values()))
     
+    ydl_opts = {
+        "outtmpl": "temp_audio.%(ext)s",
+        "format": "bestaudio/best",
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+        # Anti-bot configurations
+        "user_agent": client_config["user-agent"],
+        "extractor_args": client_config["extractor_args"],
+        "cookiesfrombrowser": ("chrome",),
+        "proxy": random.choice(PROXIES) if PROXIES else None,
+        "ignoreerrors": True,
+        "retries": 3,
+        "sleep_interval": random.randint(5, 10),
+        "max_sleep_interval": 30,
+        "http_headers": {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        },
+    }
+
     try:
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            # Add randomized delay before download
+            await asyncio.sleep(random.uniform(2, 10))
+            
             info = ydl.extract_info(url, download=True)
-            return ydl.prepare_filename(info).replace('.webm', '.mp3')
+            return ydl.prepare_filename(info).replace(".webm", ".mp3")
     except Exception as e:
         print(f"Error downloading video: {str(e)}")
         return None
