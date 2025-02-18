@@ -11,3 +11,4 @@ requests
 yt-dlp
 librosa
 scipy
+browser-cookie3
