@@ -19,7 +19,7 @@ import librosa
 from scipy import stats
 import os
 import asyncio
-import random  # Added missing import
+import random
 
 # Initialize FastAPI
 app = FastAPI()
@@ -49,9 +49,11 @@ CLIENT_CONFIGS = {
     "android": {
         "user-agent": "com.google.android.youtube/17.36.4 (Linux; U; Android 13; en_US)",
         "extractor_args": {"youtube": {"player_client": ["android"]}},
+    },
     "tv": {
         "user-agent": "com.google.android.youtube.tv/17.36.4 (Linux; U; Android 13; en_US)",
         "extractor_args": {"youtube": {"player_client": ["android", "tv"]}},
+    }
 }
 
 # Define Pydantic model
@@ -134,7 +136,7 @@ async def download_youtube_video_as_audio(url):
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             }],
-            "user_agent": client_config["user-agent"],
+            "user-agent": client_config["user-agent"],
             "extractor_args": client_config["extractor_args"],
             "cookiesfrombrowser": ("chrome",),
             "ignoreerrors": True,
@@ -190,8 +192,8 @@ async def predict_model(input_parameters: model_input):
         features = await extract_features(audio_path)
         
         # Country metrics
-        LTO_VALUES = {/*... country data ...*/}
-        HIERARCHY_VALUES = {/*... country data ...*/}
+        LTO_VALUES = {}  # Add your country data here
+        HIERARCHY_VALUES = {}  # Add your country data here
         
         # Prepare model input
         observation = np.array([[
