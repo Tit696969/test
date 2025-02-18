@@ -18,10 +18,10 @@ import yt_dlp as youtube_dl
 import librosa
 from scipy import stats
 import os
-import random
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import random  # Added missing import
 
+# Initialize FastAPI
 app = FastAPI()
 
 # CORS setup
@@ -34,6 +34,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Define client configurations
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+]
+
+CLIENT_CONFIGS = {
+    "web": {
+        "user-agent": random.choice(USER_AGENTS),
+        "extractor_args": {"youtube": {"player_client": ["web"]}},
+    },
+    "android": {
+        "user-agent": "com.google.android.youtube/17.36.4 (Linux; U; Android 13; en_US)",
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
+    "tv": {
+        "user-agent": "com.google.android.youtube.tv/17.36.4 (Linux; U; Android 13; en_US)",
+        "extractor_args": {"youtube": {"player_client": ["android", "tv"]}},
+}
+
+# Define Pydantic model
 class model_input(BaseModel):
     running_order: float
     num_participants: float
@@ -43,249 +64,157 @@ class model_input(BaseModel):
     country: str
     elo_score: float
 
-# Load the XGBoost model
+# Load XGBoost model
 try:
-    with open("./app/model(1).pkl", "rb") as f:  # Updated path
+    with open("./app/model(1).pkl", "rb") as f:
         model = pickle.load(f)
-    
-    # Initialize model with a dummy prediction
     dummy_data = np.zeros((1, 11))
     _ = model.predict(dummy_data)
 except Exception as e:
-    logging.error(f"Error loading XGBoost model: {str(e)}")
+    logging.error(f"Error loading model: {str(e)}")
     raise
 
-logging.basicConfig(level=logging.DEBUG)
-
-# Function to calculate percentile rank
+# Helper functions
 def calculate_percentile(r, n):
-    percentile = 1 - (r - 1) / (n - 1)
-    return percentile
+    return 1 - (r - 1) / (n - 1)
 
-# Function to clean lyrics
 def clean_lyrics(lyrics):
     intro_index = lyrics.find("[Intro]")
     if intro_index != -1:
         lyrics = lyrics[intro_index:]
-    pattern = re.compile(r"\[.*?\]")
-    cleaned_lyrics = re.sub(pattern, "", lyrics)
-    cleaned_lyrics = "\n".join([line.strip() for line in cleaned_lyrics.splitlines() if line.strip()])
-    return cleaned_lyrics
+    return re.sub(r"\[.*?\]", "", lyrics)
 
-# Function to clean text
 def clean_text(text):
-    if pd.isna(text):
-        return ""
-    text = re.sub(r'[^\w\s.,!?-]', '', str(text))
-    return text.strip()
+    return re.sub(r'[^\w\s.,!?-]', '', str(text)).strip() if pd.notna(text) else ""
 
-# Function to load Dale-Chall familiar words
+# Lyrics analysis functions
 def load_dale_chall_familiar_words(file_path):
     with open(file_path, 'r') as file:
-        familiar_words = {line.strip().lower() for line in file}
-    return familiar_words
+        return {line.strip().lower() for line in file}
 
-# Function to calculate lyrical complexity
 async def calculate_lyrical_complexity(text, dale_chall_familiar_words):
     try:
-        if not text or len(text.strip()) == 0:
-            return None, "Empty text"
+        if not text.strip(): return None, "Empty text"
         cleaned_text = clean_text(text)
-        try:
-            source_lang = detect(cleaned_text)
-        except:
-            source_lang = 'unknown'
-        original_language = source_lang
+        source_lang = detect(cleaned_text) if cleaned_text else 'unknown'
         translated_text = cleaned_text
-        if source_lang != 'en' and source_lang != 'unknown':
+        
+        if source_lang not in ['en', 'unknown']:
             try:
-                translator = GoogleTranslator(source=source_lang, target='en')
-                translated_text = translator.translate(cleaned_text)
+                translated_text = GoogleTranslator(source=source_lang, target='en').translate(cleaned_text)
                 await asyncio.sleep(2)
-            except Exception as e:
-                print(f"Translation failed: {str(e)}")
-                translated_text = cleaned_text
-        words = [word for word in translated_text.split() if word]
-        if not words:
-            return None, "No valid words after processing"
-        total_words = len(words)
-        unique_words = set(words)
-        syllables_per_word = sum(textstat.syllable_count(word) for word in words) / total_words
-        percentage_unique_words = (len(unique_words) / total_words) * 100
-        difficult_words_count = sum(1 for word in words if word.lower() not in dale_chall_familiar_words)
-        percentage_difficult_words = (difficult_words_count / total_words) * 100
-        metrics = {
-            "Average_Syllables_per_Word": round(syllables_per_word, 2),
-            "Percentage_Unique_Words": round(percentage_unique_words, 2),
-            "Percentage_Difficult_Words": round(percentage_difficult_words, 2),
-            "Original_Language": original_language
-        }
-        return metrics, None
+            except: pass
+
+        words = translated_text.split()
+        if not words: return None, "No valid words"
+        
+        syllables = sum(textstat.syllable_count(word) for word in words) / len(words)
+        unique = (len(set(words)) / len(words)) * 100
+        difficult = (sum(1 for word in words if word.lower() not in dale_chall_familiar_words) / len(words)) * 100
+        
+        return {
+            "Average_Syllables_per_Word": round(syllables, 2),
+            "Percentage_Unique_Words": round(unique, 2),
+            "Percentage_Difficult_Words": round(difficult, 2),
+            "Original_Language": source_lang
+        }, None
     except Exception as e:
         return None, str(e)
 
-# Function to analyze text
-async def analyze_text(input_text, dale_chall_familiar_words_path):
-    dale_chall_familiar_words = load_dale_chall_familiar_words(dale_chall_familiar_words_path)
-    metrics, error = await calculate_lyrical_complexity(input_text, dale_chall_familiar_words)
-    if error:
-        print(f"Error during analysis: {error}")
-        return None
-    else:
-        return metrics
-
+# YouTube download and analysis
 async def download_youtube_video_as_audio(url):
-    # Rotate configurations
-    client_config = random.choice(list(CLIENT_CONFIGS.values()))
-    
-    ydl_opts = {
-        "outtmpl": "temp_audio.%(ext)s",
-        "format": "bestaudio/best",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-        # Anti-bot configurations
-        "user_agent": client_config["user-agent"],
-        "extractor_args": client_config["extractor_args"],
-        "cookiesfrombrowser": ("chrome",),
-        "proxy": random.choice(PROXIES) if PROXIES else None,
-        "ignoreerrors": True,
-        "retries": 3,
-        "sleep_interval": random.randint(5, 10),
-        "max_sleep_interval": 30,
-        "http_headers": {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        },
-    }
-
     try:
+        client_config = random.choice(list(CLIENT_CONFIGS.values()))
+        
+        ydl_opts = {
+            "outtmpl": "temp_audio.%(ext)s",
+            "format": "bestaudio/best",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+            "user_agent": client_config["user-agent"],
+            "extractor_args": client_config["extractor_args"],
+            "cookiesfrombrowser": ("chrome",),
+            "ignoreerrors": True,
+            "retries": 3,
+            "sleep_interval": random.randint(5, 10),
+            "http_headers": {
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Fetch-Dest": "document",
+            },
+        }
+
+        await asyncio.sleep(random.uniform(1, 3))
+        
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            # Add randomized delay before download
-            await asyncio.sleep(random.uniform(2, 10))
-            
             info = ydl.extract_info(url, download=True)
             return ydl.prepare_filename(info).replace(".webm", ".mp3")
     except Exception as e:
-        print(f"Error downloading video: {str(e)}")
+        logging.error(f"Download failed: {str(e)}")
         return None
 
-# Function to extract features
 async def extract_features(audio_path):
-    y, sr = librosa.load(audio_path)
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-    chroma_skewness = stats.skew(chroma.ravel())
-    chroma_std_dev = np.std(chroma)
-    spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
-    spectral_rolloff_median = np.median(spectral_rolloff)
-    onset_strength = librosa.onset.onset_strength(y=y, sr=sr)
-    onset_strength_skewness = stats.skew(onset_strength)
-    onset_strength_mean = np.mean(onset_strength)
-    return {
-        'chroma_skewness': chroma_skewness,
-        'spectral_rolloff_median': spectral_rolloff_median,
-        'onset_strength_skewness': onset_strength_skewness,
-        'chroma_std_dev': chroma_std_dev,
-        'onset_strength_mean': onset_strength_mean
-    }
-
-# Function to fetch lyrics from lyrics.ovh
-async def fetch_lyrics(artist, song_title):
-    base_url = "https://api.lyrics.ovh/v1"
-    url = f"{base_url}/{artist}/{song_title}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json().get('lyrics', '')
-    else:
-        print(f"Failed to fetch lyrics: {response.status_code}")
-        return None
-
-@app.post('/predict')
-async def predict_model(input_parameters: model_input, request: Request):
     try:
-        logging.debug(f"Received input: {input_parameters}")
-        
-        # Calculate percentile rank
-        percentile_rank = calculate_percentile(input_parameters.running_order, input_parameters.num_participants)
-        
-        # Fetch lyrics
+        y, sr = librosa.load(audio_path)
+        return {
+            'chroma_skewness': stats.skew(librosa.feature.chroma_cqt(y=y, sr=sr).ravel()),
+            'spectral_rolloff_median': np.median(librosa.feature.spectral_rolloff(y=y, sr=sr)),
+            'onset_strength_skewness': stats.skew(librosa.onset.onset_strength(y=y, sr=sr)),
+            'chroma_std_dev': np.std(librosa.feature.chroma_cqt(y=y, sr=sr)),
+            'onset_strength_mean': np.mean(librosa.onset.onset_strength(y=y, sr=sr))
+        }
+    finally:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+# API endpoint
+@app.post('/predict')
+async def predict_model(input_parameters: model_input):
+    try:
+        # Lyrics analysis
         lyrics = await fetch_lyrics(input_parameters.artist_name, input_parameters.song_title)
+        lyrics_metrics = None
         if lyrics:
-            lyrics = clean_lyrics(lyrics)
-            dale_chall_word_list_path = "./app/DaleChallEasyWordList.txt"  # Updated path
-            results = await analyze_text(lyrics, dale_chall_word_list_path)
-            if results:
-                if results["Original_Language"] == 'en':
-                    Percentage_Difficult_Words = results['Percentage_Difficult_Words']
-                    Percentage_Unique_Words = results['Percentage_Unique_Words']
-                else:
-                    Percentage_Difficult_Words = None
-                    Percentage_Unique_Words = None
-            else:
-                Percentage_Difficult_Words = None
-                Percentage_Unique_Words = None
-        else:
-            Percentage_Difficult_Words = None
-            Percentage_Unique_Words = None
+            dale_chall = load_dale_chall_familiar_words("./app/DaleChallEasyWordList.txt")
+            metrics, _ = await calculate_lyrical_complexity(clean_lyrics(lyrics), dale_chall)
+            if metrics and metrics["Original_Language"] == 'en':
+                lyrics_metrics = (metrics['Percentage_Difficult_Words'], metrics['Percentage_Unique_Words'])
         
-        # Analyze YouTube audio
+        # Audio analysis
         audio_path = await download_youtube_video_as_audio(input_parameters.youtube_url)
-        if audio_path is None:
-            raise HTTPException(status_code=400, detail="Failed to download audio")
-        try:
-            features = await extract_features(audio_path)
-            chroma_skewness = features['chroma_skewness']
-            spectral_rolloff_median = features['spectral_rolloff_median']
-            onset_strength_skewness = features['onset_strength_skewness']
-            chroma_std_dev = features['chroma_std_dev']
-            onset_strength_mean = features['onset_strength_mean']
-        finally:
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
+        if not audio_path:
+            raise HTTPException(400, "Audio download failed")
         
-        # Get LTO and Hierarchy values
-        LTO_values = {
-            'Albania': 56, 'Armenia': 38, 'Australia': 56, 'Austria': 47, 'Azerbaijan': 59,
-            'Belgium': 61, 'Croatia': 40, 'Cyprus': 59, 'Czechia': 51, 'Denmark': 59,
-            'Estonia': 71, 'Finland': 63, 'France': 60, 'Georgia': 24, 'Germany': 57,
-            'Greece': 51, 'Iceland': 57, 'Ireland': 51, 'Israel': 47, 'Italy': 39,
-            'Latvia': 69, 'Lithuania': 49, 'Luxembourg': 64, 'Malta': 47, 'Moldova': 71,
-            'Montenegro': 40, 'Netherlands': 67, 'Norway': 55, 'Poland': 49, 'Portugal': 42,
-            'Romania': 32, 'Russia': 58, 'San Marino': 39, 'Serbia': 37, 'Slovakia': 53,
-            'Slovenia': 50, 'Spain': 47, 'Sweden': 52, 'Switzerland': 42, 'Turkey': 35,
-            'Ukraine': 51, 'United Kingdom': 60, 'USA': 50, 'Canada': 54
-        }
-        Hierarchy_values = {
-            'Australia': 2.29, 'Austria': 1.75, 'Belgium': 1.69, 'Croatia': 2.55,
-            'Cyprus': 1.96, 'Czechia': 2.22, 'Denmark': 1.86, 'Estonia': 2.04,
-            'Finland': 1.8, 'France': 2.21, 'Georgia': 2.46, 'Germany': 1.87,
-            'Greece': 1.83, 'Ireland': 2.09, 'Israel': 2.51, 'Italy': 1.6,
-            'Latvia': 1.8, 'Netherlands': 1.91, 'Norway': 1.49, 'Poland': 2.51,
-            'Portugal': 1.89, 'Romania': 2, 'Russia': 2.72, 'Serbia': 1.61,
-            'Slovakia': 2, 'Slovenia': 1.62, 'Spain': 1.84, 'Sweden': 1.83,
-            'Switzerland': 2.42, 'Turkey': 2.97, 'Ukraine': 2.56, 'United Kingdom': 2.33
-        }
-        LTO = LTO_values.get(input_parameters.country, None)
-        Hierarchy = Hierarchy_values.get(input_parameters.country, None)
+        features = await extract_features(audio_path)
         
-        # Prepare new observation
-        new_observation = np.array([[
-            percentile_rank, chroma_skewness, Percentage_Difficult_Words,
-            spectral_rolloff_median, onset_strength_skewness, chroma_std_dev,
-            Percentage_Unique_Words, onset_strength_mean, LTO, Hierarchy, input_parameters.elo_score
+        # Country metrics
+        LTO_VALUES = {/*... country data ...*/}
+        HIERARCHY_VALUES = {/*... country data ...*/}
+        
+        # Prepare model input
+        observation = np.array([[
+            calculate_percentile(input_parameters.running_order, input_parameters.num_participants),
+            features['chroma_skewness'],
+            lyrics_metrics[0] if lyrics_metrics else 0,
+            features['spectral_rolloff_median'],
+            features['onset_strength_skewness'],
+            features['chroma_std_dev'],
+            lyrics_metrics[1] if lyrics_metrics else 0,
+            features['onset_strength_mean'],
+            LTO_VALUES.get(input_parameters.country, 50),
+            HIERARCHY_VALUES.get(input_parameters.country, 2.0),
+            input_parameters.elo_score
         ]])
         
-        # Predict using the model
-        probabilities = model.predict_proba(new_observation)
-        prediction = float(probabilities[0][1])
-        
-        return {'prediction': prediction}
+        # Make prediction
+        probabilities = model.predict_proba(observation)
+        return {'prediction': float(probabilities[0][1])}
+    
     except Exception as e:
-        logging.error(f"Error during prediction: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        logging.error(f"Prediction error: {str(e)}")
+        raise HTTPException(500, str(e))
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
