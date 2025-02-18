@@ -133,21 +133,28 @@ async def analyze_text(input_text, dale_chall_familiar_words_path):
     else:
         return metrics
 
-# Function to download YouTube video as audio
 async def download_youtube_video_as_audio(url):
-    ydl_opts = {
-        'outtmpl': 'temp_audio.%(ext)s',
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'cookiefile': 'cookies.txt',  # Add this line
-    }
-    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info).replace('.webm', '.mp3')
+
+ydl_opts = {
+    'outtmpl': 'temp_audio.%(ext)s',
+    'format': 'bestaudio/best',
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+    'cookiefile': './cookies.txt',  # Ensure this path is correct
+    'verbose': True,  # Enable verbose logging
+    'extract_flat': True,  # Skip signature extraction
+    'ignoreerrors': True,  # Ignore errors and continue
+}
+    try:
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return ydl.prepare_filename(info).replace('.webm', '.mp3')
+    except Exception as e:
+        print(f"Error downloading video: {str(e)}")
+        return None
 
 # Function to extract features
 async def extract_features(audio_path):
