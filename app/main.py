@@ -143,6 +143,7 @@ async def download_youtube_video_as_audio(url):
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'cookiefile': 'cookies.txt',  # Add this line
     }
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
